@@ -1776,11 +1776,11 @@ impl Full for SurfpoolFullRpc {
                     .await
                     .map_err(|e| SurfpoolError::client_error(e).into())
             } else {
-                let min_slot = svm_locker.with_svm_reader(|svm_reader| {
-                    svm_reader.blocks.keys().min().copied().unwrap_or(0)
-                });
-
-                Ok(min_slot)
+                svm_locker.with_svm_reader(|svm_reader| {
+                    Ok::<_, jsonrpc_core::Error>(
+                        svm_reader.blocks.keys()?.into_iter().min().unwrap_or(0),
+                    )
+                })
             }
         })
     }
@@ -1820,11 +1820,13 @@ impl Full for SurfpoolFullRpc {
 
         Box::pin(async move {
             let block_time = svm_locker.with_svm_reader(|svm_reader| {
-                svm_reader
-                    .blocks
-                    .get(&slot)
-                    .map(|block| (block.block_time / 1_000) as UnixTimestamp)
-            });
+                Ok::<_, jsonrpc_core::Error>(
+                    svm_reader
+                        .blocks
+                        .get(&slot)?
+                        .map(|block| (block.block_time / 1_000) as UnixTimestamp),
+                )
+            })?;
             Ok(block_time)
         })
     }
@@ -1879,27 +1881,28 @@ impl Full for SurfpoolFullRpc {
                 .map(|end| end.min(committed_latest_slot))
                 .unwrap_or(committed_latest_slot);
 
-            let (local_min_slot, local_slots, effective_end_slot) =
-                if effective_end_slot < start_slot {
-                    (None, vec![], effective_end_slot)
-                } else {
-                    svm_locker.with_svm_reader(|svm_reader| {
-                        let local_min_slot = svm_reader.blocks.keys().min().copied();
+            let (local_min_slot, local_slots, effective_end_slot) = if effective_end_slot
+                < start_slot
+            {
+                (None, vec![], effective_end_slot)
+            } else {
+                svm_locker.with_svm_reader(|svm_reader| {
+                    let local_min_slot = svm_reader.blocks.keys()?.into_iter().min();
 
-                        let local_slots: Vec<Slot> = svm_reader
-                            .blocks
-                            .keys()
-                            .filter(|&&slot| {
-                                slot >= start_slot
-                                    && slot <= effective_end_slot
-                                    && slot <= committed_latest_slot
-                            })
-                            .copied()
-                            .collect();
+                    let local_slots: Vec<Slot> = svm_reader
+                        .blocks
+                        .keys()?
+                        .into_iter()
+                        .filter(|slot| {
+                            *slot >= start_slot
+                                && *slot <= effective_end_slot
+                                && *slot <= committed_latest_slot
+                        })
+                        .collect();
 
-                        (local_min_slot, local_slots, effective_end_slot)
-                    })
-                };
+                    Ok::<_, jsonrpc_core::Error>((local_min_slot, local_slots, effective_end_slot))
+                })?
+            };
 
             if let Some(min_context_slot) = config.min_context_slot {
                 if committed_latest_slot < min_context_slot {
@@ -2001,17 +2004,17 @@ impl Full for SurfpoolFullRpc {
         Box::pin(async move {
             let committed_latest_slot = svm_locker.get_slot_for_commitment(&commitment);
             let (local_min_slot, local_slots) = svm_locker.with_svm_reader(|svm_reader| {
-                let local_min_slot = svm_reader.blocks.keys().min().copied();
+                let local_min_slot = svm_reader.blocks.keys()?.into_iter().min();
 
                 let local_slots: Vec<Slot> = svm_reader
                     .blocks
-                    .keys()
-                    .filter(|&&slot| slot >= start_slot && slot <= committed_latest_slot)
-                    .copied()
+                    .keys()?
+                    .into_iter()
+                    .filter(|slot| *slot >= start_slot && *slot <= committed_latest_slot)
                     .collect();
 
-                (local_min_slot, local_slots)
-            });
+                Ok::<_, jsonrpc_core::Error>((local_min_slot, local_slots))
+            })?;
 
             if let Some(min_context_slot) = config.min_context_slot {
                 if committed_latest_slot < min_context_slot {
@@ -2125,8 +2128,15 @@ impl Full for SurfpoolFullRpc {
 
     fn get_first_available_block(&self, meta: Self::Metadata) -> Result<Slot> {
         meta.with_svm_reader(|svm_reader| {
-            svm_reader.blocks.keys().min().copied().unwrap_or_default()
-        })
+            Ok::<_, jsonrpc_core::Error>(
+                svm_reader
+                    .blocks
+                    .keys()?
+                    .into_iter()
+                    .min()
+                    .unwrap_or_default(),
+            )
+        })?
         .map_err(Into::into)
     }
 
@@ -2276,7 +2286,7 @@ impl Full for SurfpoolFullRpc {
 
             // Get MAX_PRIORITIZATION_FEE_BLOCKS_CACHE most recent blocks
             let recent_headers = blocks
-                .into_iter()
+                .into_iter()?
                 .sorted_by_key(|(slot, _)| std::cmp::Reverse(*slot))
                 .take(MAX_PRIORITIZATION_FEE_BLOCKS_CACHE)
                 .collect::<Vec<_>>();
@@ -3217,17 +3227,20 @@ mod tests {
             let block_height = svm_writer.chain_tip.index;
             let parent_slot = svm_writer.get_latest_absolute_slot();
 
-            svm_writer.blocks.insert(
-                parent_slot,
-                BlockHeader {
-                    hash,
-                    previous_blockhash: previous_chain_tip.hash.clone(),
-                    block_time: chrono::Utc::now().timestamp_millis(),
-                    block_height,
+            svm_writer
+                .blocks
+                .store(
                     parent_slot,
-                    signatures: Vec::new(),
-                },
-            );
+                    BlockHeader {
+                        hash,
+                        previous_blockhash: previous_chain_tip.hash.clone(),
+                        block_time: chrono::Utc::now().timestamp_millis(),
+                        block_height,
+                        parent_slot,
+                        signatures: Vec::new(),
+                    },
+                )
+                .unwrap();
         }
 
         let res = setup
@@ -3814,18 +3827,21 @@ mod tests {
         let slots: Vec<u64> = slots.into_iter().collect();
         setup.context.svm_locker.with_svm_writer(|svm_writer| {
             for slot in slots.iter() {
-                svm_writer.blocks.insert(
-                    *slot,
-                    BlockHeader {
-                        hash: SyntheticBlockhash::new(*slot).to_string(),
-                        previous_blockhash: SyntheticBlockhash::new(slot.saturating_sub(1))
-                            .to_string(),
-                        block_time: chrono::Utc::now().timestamp_millis(),
-                        block_height: *slot,
-                        parent_slot: slot.saturating_sub(1),
-                        signatures: vec![],
-                    },
-                );
+                svm_writer
+                    .blocks
+                    .store(
+                        *slot,
+                        BlockHeader {
+                            hash: SyntheticBlockhash::new(*slot).to_string(),
+                            previous_blockhash: SyntheticBlockhash::new(slot.saturating_sub(1))
+                                .to_string(),
+                            block_time: chrono::Utc::now().timestamp_millis(),
+                            block_height: *slot,
+                            parent_slot: slot.saturating_sub(1),
+                            signatures: vec![],
+                        },
+                    )
+                    .unwrap();
             }
             svm_writer.latest_epoch_info.absolute_slot = slots.into_iter().max().unwrap_or(0);
         });
@@ -3886,7 +3902,7 @@ mod tests {
         insert_test_blocks(&setup, local_slots);
 
         let local_min = setup.context.svm_locker.with_svm_reader(|svm_reader| {
-            let min = svm_reader.blocks.keys().min().copied();
+            let min = svm_reader.blocks.keys().unwrap().into_iter().min();
             min
         });
         assert_eq!(local_min, Some(50), "Local minimum should be slot 50");
@@ -3976,9 +3992,8 @@ mod tests {
         });
 
         let (local_min, latest_slot) = setup.context.svm_locker.with_svm_reader(|svm_reader| {
-            let min = svm_reader.blocks.keys().min().copied();
+            let min = svm_reader.blocks.keys().unwrap().into_iter().min();
             let latest = svm_reader.get_latest_absolute_slot();
-            let _available: Vec<_> = svm_reader.blocks.keys().copied().collect();
             (min, latest)
         });
         assert_eq!(local_min, Some(100), "Local minimum should be 100");
