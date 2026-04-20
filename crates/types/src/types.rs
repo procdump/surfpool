@@ -20,12 +20,12 @@ use solana_message::inner_instruction::InnerInstructionsList;
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use solana_transaction::versioned::VersionedTransaction;
-use solana_transaction_context::TransactionReturnData;
+use solana_transaction_context::transaction::TransactionReturnData;
 use solana_transaction_error::TransactionError;
 use txtx_addon_kit::indexmap::IndexMap;
 use uuid::Uuid;
 
-use crate::{DEFAULT_MAINNET_RPC_URL, SvmFeatureConfig};
+use crate::DEFAULT_MAINNET_RPC_URL;
 
 pub const DEFAULT_RPC_PORT: u16 = 8899;
 pub const DEFAULT_WS_PORT: u16 = 8900;

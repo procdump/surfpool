@@ -1402,6 +1402,7 @@ impl Full for SurfpoolFullRpc {
                             effective_slot: svm_reader.get_latest_absolute_slot(),
                             epoch: svm_reader.latest_epoch_info().epoch,
                             post_balance: 0,
+                            commission_bps: None,
                         })
                     })
                     .collect()
@@ -1442,6 +1443,7 @@ impl Full for SurfpoolFullRpc {
             version: None,
             feature_set: None,
             shred_version: None,
+            client_id: None,
         }])
     }
 
