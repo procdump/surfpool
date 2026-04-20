@@ -67,7 +67,7 @@ txtx-gql = { workspace = true }
 txtx-supervisor-ui = { workspace = true, optional = true }
 
 [features]
-default = ["cli", "sqlite", "register-tracing"]
+default = ["cli", "sqlite", "register-tracing", "sbpf-debugger"]
 cli = ["clap/derive", "clap/env", "clap_complete", "toml/parse", "ctrlc", "hiro-system-kit/log"]
 supervisor_ui = ["txtx-supervisor-ui"]
 explorer = []
@@ -76,6 +76,7 @@ sqlite = ["surfpool-core/sqlite"]
 postgres = ["surfpool-core/postgres"]
 version_check = []
 register-tracing = ["surfpool-core/register-tracing"]
+sbpf-debugger = ["surfpool-core/sbpf-debugger"]
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 fork = "0.2.0"
